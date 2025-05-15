@@ -29,6 +29,7 @@ flutter:
     - assets/jump.mp3
     - assets/crash.mp3
     - assets/bgm.mp3
+    - assets/gameover.mp3
 
 flutter_icons:
   android: true
