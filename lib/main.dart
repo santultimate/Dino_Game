@@ -1,391 +1,259 @@
-import 'dart:async';
-import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'dart:async';
+import 'package:vibration/vibration.dart';
 
-void main() => runApp(DinoGame());
-
-enum Difficulty { Easy, Medium, Hard }
-
-Difficulty selectedDifficulty = Difficulty.Medium;
+void main() {
+  runApp(const DinoGame());
+}
 
 class DinoGame extends StatelessWidget {
+  const DinoGame({super.key});
+
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
+      title: 'Dino Game',
+      theme: ThemeData.dark(),
+      home: const StartScreen(),
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(primarySwatch: Colors.green),
-      home: StartScreen(),
     );
   }
 }
 
 class StartScreen extends StatelessWidget {
+  const StartScreen({super.key});
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.green[100],
-      body: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Text(
-              '🐾 Dino Game 🦖',
-              style: TextStyle(
-                fontSize: 40,
-                fontWeight: FontWeight.bold,
-                color: Colors.green[800],
-              ),
-            ),
-            SizedBox(height: 50),
-            ElevatedButton(
-              onPressed: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (context) => DifficultySelectionScreen()),
-                );
-              },
-              style: ElevatedButton.styleFrom(
-                padding: EdgeInsets.symmetric(horizontal: 30, vertical: 15),
-              ),
-              child: Text('Start Game', style: TextStyle(fontSize: 24)),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class DifficultySelectionScreen extends StatelessWidget {
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.green[50],
-      body: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Text('Choisissez un niveau', style: TextStyle(fontSize: 30, fontWeight: FontWeight.bold)),
-            SizedBox(height: 30),
-            _buildDifficultyButton(context, 'Facile', Difficulty.Easy),
-            _buildDifficultyButton(context, 'Moyen', Difficulty.Medium),
-            _buildDifficultyButton(context, 'Difficile', Difficulty.Hard),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildDifficultyButton(BuildContext context, String label, Difficulty level) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 10),
-      child: ElevatedButton(
-        onPressed: () {
-          selectedDifficulty = level;
-          Navigator.push(context, MaterialPageRoute(builder: (_) => DinoGameScreen()));
+      backgroundColor: Colors.black,
+      body: GestureDetector(
+        onTap: () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(builder: (context) => const GameScreen()),
+          );
         },
-        style: ElevatedButton.styleFrom(padding: EdgeInsets.symmetric(horizontal: 40, vertical: 15)),
-        child: Text(label, style: TextStyle(fontSize: 22)),
+        child: Stack(
+          children: [
+            Center(
+              child: Image.asset('assets/start_screen_image.png'),
+            ),
+            const Positioned(
+              bottom: 80,
+              left: 0,
+              right: 0,
+              child: Text(
+                'TAP TO START',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 30, color: Colors.white70),
+              ),
+            )
+          ],
+        ),
       ),
     );
   }
 }
 
-class DinoGameScreen extends StatefulWidget {
+class GameScreen extends StatefulWidget {
+  const GameScreen({super.key});
+
   @override
-  _DinoGameScreenState createState() => _DinoGameScreenState();
+  State<GameScreen> createState() => _GameScreenState();
 }
 
-class _DinoGameScreenState extends State<DinoGameScreen> {
-  final AudioCache _audioCache = AudioCache(prefix: 'assets/');
-  AudioPlayer? _bgmPlayer;
-  AudioPlayer? _effectPlayer;
-
+class _GameScreenState extends State<GameScreen> with SingleTickerProviderStateMixin {
+  double dinoY = 1;
   bool isJumping = false;
-  bool isGameOver = false;
-  bool isDarkMode = false;
-  bool isPaused = false;
-  int gameSpeed = 5;
+  double time = 0;
+  double height = 0;
+  double initialHeight = 1;
   int score = 0;
-  List<Obstacle> obstacles = [];
-  Random random = Random();
+  int bestScore = 0;
+  double cactusX = 1;
+  bool gameStarted = false;
 
-  double dinosaurSize = 0.1;
-  double obstacleSize = 0.1;
+  final AudioPlayer _bgmPlayer = AudioPlayer();
+  final AudioPlayer _effectPlayer = AudioPlayer();
 
-  double gameOverOpacity = 0;
-  double gameOverScale = 0.8;
+  late SharedPreferences prefs;
+  late Timer gameTimer;
+
+  final double characterOffsetY = 0.2; // Décalage vers le haut
 
   @override
   void initState() {
     super.initState();
-
-    switch (selectedDifficulty) {
-      case Difficulty.Easy:
-        gameSpeed = 3;
-        break;
-      case Difficulty.Medium:
-        gameSpeed = 5;
-        break;
-      case Difficulty.Hard:
-        gameSpeed = 7;
-        break;
-    }
-
+    initPrefs();
     _initializeAudio();
-    startGame();
-    Timer.periodic(Duration(seconds: 1), (_) => increaseDifficulty());
+  }
+
+  Future<void> initPrefs() async {
+    prefs = await SharedPreferences.getInstance();
+    bestScore = prefs.getInt('bestScore') ?? 0;
+    setState(() {});
   }
 
   Future<void> _initializeAudio() async {
-    await _audioCache.loadAll(['jump.mp3', 'crash.mp3', 'bgm.mp3', 'gameover.mp3']);
-    _bgmPlayer?.stop();
-    _bgmPlayer = await _audioCache.loop('bgm.mp3');
-    _bgmPlayer?.setVolume(0.3);
+    await _bgmPlayer.setReleaseMode(ReleaseMode.loop);
+    await _bgmPlayer.setSource(AssetSource('bgm.mp3'));
+    await _bgmPlayer.setVolume(0.4);
+    await _bgmPlayer.resume();
   }
 
   void jump() {
-    if (isJumping || isPaused || isGameOver) return;
-    setState(() => isJumping = true);
-    _audioCache.play('jump.mp3');
-    Timer(Duration(milliseconds: 500), () => setState(() => isJumping = false));
-  }
+    if (!isJumping) {
+      _effectPlayer.play(AssetSource('jump.mp3'));
+      isJumping = true;
+      time = 0;
+      initialHeight = dinoY;
+      Timer.periodic(const Duration(milliseconds: 50), (timer) {
+        time += 0.05;
+        height = -4.9 * time * time + 5 * time;
 
-  void increaseDifficulty() {
-    if (!isPaused && !isGameOver) {
-      setState(() => gameSpeed += 1);
-    }
-  }
-
-  void checkCollisions() {
-    for (var obstacle in obstacles) {
-      if (obstacle.x < 100 + 50 && obstacle.x > 100 - 50 && !isJumping) {
-        _audioCache.play('crash.mp3');
-        _audioCache.play('gameover.mp3');
-        _bgmPlayer?.stop();
         setState(() {
-          isGameOver = true;
-          gameOverOpacity = 0;
-          gameOverScale = 0.8;
+          dinoY = initialHeight - height;
         });
-        Future.delayed(Duration(milliseconds: 50), () {
-          setState(() {
-            gameOverOpacity = 1;
-            gameOverScale = 1.0;
-          });
-        });
-        break;
-      }
-    }
-  }
 
-  void addObstacle() {
-    if (!isPaused && !isGameOver) {
-      setState(() {
-        double randomOffset = random.nextInt(200).toDouble();
-        obstacles.add(Obstacle(x: 400 + randomOffset));
+        if (dinoY > 1) {
+          dinoY = 1;
+          isJumping = false;
+          timer.cancel();
+        }
       });
     }
   }
 
-  void saveBestScore() async {
-    final prefs = await SharedPreferences.getInstance();
-    int? bestScore = prefs.getInt('bestScore') ?? 0;
-    if (score > bestScore) prefs.setInt('bestScore', score);
-  }
-
-  Future<int> loadBestScore() async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getInt('bestScore') ?? 0;
-  }
-
   void startGame() {
-    Timer.periodic(Duration(milliseconds: 100), (timer) {
-      if (isGameOver) {
-        timer.cancel();
-        return;
-      }
-      if (!isPaused) {
-        setState(() {
-          for (var obstacle in obstacles) {
-            obstacle.x -= gameSpeed;
-          }
-          obstacles.removeWhere((obstacle) => obstacle.x < 0);
+    gameStarted = true;
+    cactusX = 1;
+
+    gameTimer = Timer.periodic(const Duration(milliseconds: 30), (timer) {
+      setState(() {
+        cactusX -= 0.02;
+        if (cactusX < -1.2) {
+          cactusX = 1;
           score++;
-          checkCollisions();
-          if (obstacles.length < 3) addObstacle();
-        });
-      }
+        }
+
+        // Collision
+        if (cactusX < 0.2 && cactusX > -0.2 && dinoY > 0.7) {
+          _effectPlayer.play(AssetSource('crash.mp3'));
+          Vibration.vibrate(duration: 300);
+          gameOver();
+          timer.cancel();
+        }
+      });
     });
   }
 
-  void togglePause() {
-    setState(() => isPaused = !isPaused);
+  void gameOver() async {
+    await _bgmPlayer.pause();
+    await _effectPlayer.play(AssetSource('gameover.mp3'));
+
+    if (score > bestScore) {
+      bestScore = score;
+      await prefs.setInt('bestScore', bestScore);
+    }
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => AlertDialog(
+        title: const Text("Game Over"),
+        content: Text("Score: $score\nBest: $bestScore"),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context);
+              resetGame();
+            },
+            child: const Text("Retry"),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context);
+              Navigator.pop(context);
+            },
+            child: const Text("Menu"),
+          ),
+        ],
+      ),
+    );
   }
 
-  void toggleTheme() {
-    setState(() => isDarkMode = !isDarkMode);
+  void resetGame() async {
+    setState(() {
+      dinoY = 1;
+      isJumping = false;
+      time = 0;
+      height = 0;
+      initialHeight = 1;
+      score = 0;
+      cactusX = 1;
+      gameStarted = false;
+    });
+    await _bgmPlayer.resume();
   }
 
   @override
   void dispose() {
-    _bgmPlayer?.stop();
-    _bgmPlayer?.dispose();
+    _bgmPlayer.dispose();
+    _effectPlayer.dispose();
+    if (gameTimer.isActive) gameTimer.cancel();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    double screenWidth = MediaQuery.of(context).size.width;
-    double screenHeight = MediaQuery.of(context).size.height;
-    double dinosaurWidth = screenWidth * dinosaurSize;
-    double dinosaurHeight = screenHeight * dinosaurSize;
-    double obstacleWidth = screenWidth * obstacleSize;
-    double obstacleHeight = screenHeight * obstacleSize;
-
     return GestureDetector(
-      onTap: jump,
+      onTap: () {
+        if (!gameStarted) {
+          startGame();
+        } else {
+          jump();
+        }
+      },
       child: Scaffold(
-        appBar: AppBar(
-          title: Text("Dino Game - \${selectedDifficulty.name}"),
-          actions: [
-            IconButton(
-              icon: Icon(isPaused ? Icons.play_arrow : Icons.pause),
-              onPressed: togglePause,
+        backgroundColor: Colors.black,
+        body: Stack(
+          children: [
+            Positioned.fill(
+              child: Image.asset('assets/background.png', fit: BoxFit.cover),
             ),
-            Switch(
-              value: isDarkMode,
-              onChanged: (_) => toggleTheme(),
+            AnimatedContainer(
+              alignment: Alignment(0, dinoY - characterOffsetY),
+              duration: const Duration(milliseconds: 0),
+              child: Image.asset('assets/dino.png', height: 80),
             ),
-          ],
-          backgroundColor: isDarkMode ? Colors.black : Colors.green,
-        ),
-        body: isGameOver
-            ? AnimatedOpacity(
-                opacity: gameOverOpacity,
-                duration: Duration(milliseconds: 500),
-                child: AnimatedScale(
-                  scale: gameOverScale,
-                  duration: Duration(milliseconds: 500),
-                  curve: Curves.easeOutBack,
-                  child: Center(child: _buildGameOverScreen()),
-                ),
-              )
-            : Container(
-                decoration: BoxDecoration(
-                  image: DecorationImage(
-                    image: AssetImage('assets/background.png'),
-                    fit: BoxFit.cover,
-                    alignment: Alignment.bottomCenter,
-                    scale: 1,
-                  ),
-                ),
-                child: Stack(
-                  children: [
-                    ...obstacles.map((o) => Positioned(
-                          bottom: 0,
-                          left: o.x,
-                          child: Image.asset(
-                            'assets/cactus.png',
-                            width: obstacleWidth,
-                            height: obstacleHeight,
-                          ),
-                        )),
-                    Positioned(
-                      bottom: isJumping ? screenHeight * 0.2 : screenHeight * 0.1,
-                      left: 100,
-                      child: Image.asset(
-                        'assets/dino.png',
-                        width: dinosaurWidth,
-                        height: dinosaurHeight,
-                      ),
-                    ),
-                    _buildScore(),
-                  ],
+            AnimatedContainer(
+              alignment: Alignment(cactusX, 1 - characterOffsetY),
+              duration: const Duration(milliseconds: 0),
+              child: Image.asset('assets/cactus.png', height: 60),
+            ),
+            Positioned(
+              top: 40,
+              left: 20,
+              child: Text("Score: $score", style: const TextStyle(fontSize: 22, color: Colors.white)),
+            ),
+            Positioned(
+              top: 40,
+              right: 20,
+              child: Text("Best: $bestScore", style: const TextStyle(fontSize: 22, color: Colors.white70)),
+            ),
+            if (!gameStarted)
+              const Center(
+                child: Text(
+                  "TAP TO START",
+                  style: TextStyle(fontSize: 28, color: Colors.white70),
                 ),
               ),
+          ],
+        ),
       ),
     );
   }
-
-  Widget _buildScore() {
-    return Positioned(
-      top: 20,
-      left: 20,
-      child: Text(
-        'Score: $score',
-        style: TextStyle(fontSize: 30, color: isDarkMode ? Colors.white : Colors.black),
-      ),
-    );
-  }
-
-  Widget _buildGameOverScreen() {
-    saveBestScore();
-    return Column(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        Text(
-          'Game Over',
-          style: TextStyle(fontSize: 50, color: isDarkMode ? Colors.white : Colors.black),
-        ),
-        SizedBox(height: 20),
-        Text(
-          'Niveau: ${selectedDifficulty.name}',
-          style: TextStyle(fontSize: 25, color: isDarkMode ? Colors.white70 : Colors.black87),
-        ),
-        SizedBox(height: 10),
-        Text(
-          'Score: $score',
-          style: TextStyle(fontSize: 30, color: isDarkMode ? Colors.white : Colors.black),
-        ),
-        SizedBox(height: 10),
-        FutureBuilder<int>(
-          future: loadBestScore(),
-          builder: (context, snapshot) {
-            if (snapshot.connectionState == ConnectionState.done) {
-              return Text(
-                'Best Score: ${snapshot.data}',
-                style: TextStyle(fontSize: 30, color: isDarkMode ? Colors.white : Colors.black),
-              );
-            } else {
-              return CircularProgressIndicator();
-            }
-          },
-        ),
-        SizedBox(height: 20),
-        ElevatedButton(
-          onPressed: () {
-            setState(() {
-              isGameOver = false;
-              obstacles.clear();
-              score = 0;
-              gameOverOpacity = 0;
-              gameOverScale = 0.8;
-              switch (selectedDifficulty) {
-                case Difficulty.Easy:
-                  gameSpeed = 3;
-                  break;
-                case Difficulty.Medium:
-                  gameSpeed = 5;
-                  break;
-                case Difficulty.Hard:
-                  gameSpeed = 7;
-                  break;
-              }
-              _initializeAudio();
-              startGame();
-            });
-          },
-          child: Text('Play Again'),
-        ),
-      ],
-    );
-  }
-}
-
-class Obstacle {
-  double x;
-  Obstacle({required this.x});
 }

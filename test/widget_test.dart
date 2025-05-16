@@ -4,7 +4,7 @@ import 'package:dino_game/main.dart'; // adapte si ton nom de projet est différ
 
 void main() {
   testWidgets('Affichage du bouton Play', (WidgetTester tester) async {
-    await tester.pumpWidget(MaterialApp(home: DinoGame()));
+    await tester.pumpWidget(const MaterialApp(home: DinoGame()));
 
     // Vérifie que le bouton Play est présent
     expect(find.text("▶️ Play"), findsOneWidget);
